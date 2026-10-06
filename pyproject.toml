@@ -1,0 +1,28 @@
+[project]
+name = "doni-be"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+  "fastapi>=0.115",
+  "uvicorn[standard]",
+  "sqlalchemy[asyncio]>=2.0",
+  "asyncpg",
+  "alembic",
+  "pydantic-settings",
+  "pydantic[email]",
+  "python-multipart",
+  "celery[redis]",
+  "redis",
+  "httpx",
+  "pyjwt",
+  "passlib[bcrypt]",
+]
+
+[project.optional-dependencies]
+dev = ["pytest", "pytest-asyncio", "ruff", "mypy", "testcontainers[postgres,redis]"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+
+[tool.ruff]
+line-length = 100

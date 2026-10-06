@@ -1,0 +1,26 @@
+# 로컬 개발용 Override: 소스 마운트 + 자동 리로드 + 포트 노출
+services:
+    db:
+        ports: ['5432:5432']
+        volumes: ['pgdata:/var/lib/postgresql']
+
+    redis:
+        ports: ['6379:6379']
+
+    api:
+        env_file: ../.env.local
+        command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+        volumes:
+            - ../app:/srv/app
+            - ../migrations:/srv/migrations
+            - ../data:/data
+        ports: ['8000:8000']
+
+    worker:
+        env_file: ../.env.local
+        volumes:
+            - ../app:/srv/app
+            - ../data:/data
+
+volumes:
+    pgdata:

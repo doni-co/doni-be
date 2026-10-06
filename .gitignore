@@ -1,0 +1,7 @@
+.env.local
+.env.dev
+.env.prod
+data/
+__pycache__/
+.venv/
+*.pyc

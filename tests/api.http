@@ -1,0 +1,31 @@
+### Health check
+GET http://localhost:8000/health
+
+### 로그인
+POST http://localhost:8000/auth/login
+Content-Type: application/json
+
+{
+  "email": "test@example.com",
+  "password": "password"
+}
+
+### 파이프라인 생성
+POST http://localhost:8000/pipelines
+Content-Type: application/json
+
+{
+  "name": "테스트 파이프라인"
+}
+
+### 노드 추가 (PDF 텍스트 추출)
+POST http://localhost:8000/pipelines/1/nodes
+Content-Type: application/json
+
+{
+  "kind": "pdf_extract",
+  "params": {"ocr_fallback": true}
+}
+
+### 실행
+POST http://localhost:8000/pipelines/1/runs

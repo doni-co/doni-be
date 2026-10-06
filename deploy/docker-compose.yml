@@ -1,0 +1,38 @@
+# 공통(Base) 설정. local/cloud override와 함께 사용:
+#   docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.local.yml up
+services:
+    db:
+        image: postgres:18-alpine
+        environment:
+            POSTGRES_USER: ${POSTGRES_USER:-doni}
+            POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-doni}
+            POSTGRES_DB: ${POSTGRES_DB:-doni}
+        healthcheck:
+            test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER:-doni}']
+            interval: 5s
+            retries: 10
+
+    redis:
+        image: redis:7
+        healthcheck:
+            test: ['CMD', 'redis-cli', 'ping']
+            interval: 5s
+            retries: 10
+
+    api:
+        build:
+            context: ..
+            dockerfile: deploy/Dockerfile
+        command: uvicorn app.main:app --host 0.0.0.0 --port 8000
+        depends_on:
+            db: { condition: service_healthy }
+            redis: { condition: service_healthy }
+
+    worker:
+        build:
+            context: ..
+            dockerfile: deploy/Dockerfile
+        command: celery -A app.core.celery_app worker --loglevel=info
+        depends_on:
+            db: { condition: service_healthy }
+            redis: { condition: service_healthy }

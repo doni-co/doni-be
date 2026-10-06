@@ -1,0 +1,16 @@
+# dev/prod 공용 Override: 실제 배포 시 .env.dev 또는 .env.prod(+ 시크릿 주입)와 함께 사용
+services:
+    api:
+        env_file: ../.env.${APP_ENV:-dev}
+        restart: unless-stopped
+
+    worker:
+        env_file: ../.env.${APP_ENV:-dev}
+        restart: unless-stopped
+
+    db:
+        restart: unless-stopped
+        volumes: ['pgdata:/var/lib/postgresql']
+
+volumes:
+    pgdata:
