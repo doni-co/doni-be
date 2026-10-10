@@ -3,9 +3,8 @@ from typing import BinaryIO
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import storage
-from app.domains.datasets.service import register_dataset
+from app.domains.assets.service import register_asset
 from app.domains.ingestion.classifier import UnsupportedFileType, classify_by_extension
-from app.domains.media.service import register_media_set
 from app.models.enums import AssetKind, UploadStatus
 from app.models.upload import Upload
 
@@ -56,10 +55,10 @@ async def upload_file(session: AsyncSession, owner_id: int, filename: str, fileo
         await mark_failed(session, upload.id, UploadStatus.UNSUPPORTED, str(e))
         raise
 
-    if kind is AssetKind.DATASET:                                        # ④ 세부 테이블 등록
-        asset = await register_dataset(session, owner_id=owner_id, name=filename, storage_key=key)
-    else:
-        asset = await register_media_set(session, owner_id=owner_id, name=filename, storage_key=key)
+    ext = filename.rsplit(".", 1)[-1] if "." in filename else ""
+    asset = await register_asset(                                         # ④ Asset 등록 (메타데이터 DB 저장)
+        session, owner_id=owner_id, name=filename, kind=kind, storage_key=key, ext=ext,
+    )
 
     await mark_classified(session, upload.id, kind, asset.id)            # ⑤ 업로드 기록에 분류 결과 연결
 

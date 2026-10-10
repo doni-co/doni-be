@@ -4,7 +4,7 @@ from pathlib import Path
 from app.models.enums import AssetKind
 
 DATASET_EXT = {".csv", ".tsv", ".parquet", ".json"}
-MEDIA_EXT = {".pdf", ".ppt", ".pptx", ".hwp", ".hwpx", ".png", ".jpg", ".jpeg", ".docx", ".xlsx"}
+MEDIA_EXT = {".pdf", ".ppt", ".pptx", ".hwp", ".hwpx", ".png", ".jpg", ".jpeg", ".docx", ".xlsx", ".txt"}
 
 
 class UnsupportedFileType(Exception):
