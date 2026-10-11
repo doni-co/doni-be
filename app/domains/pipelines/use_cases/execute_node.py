@@ -3,7 +3,7 @@
 
 흐름: PipelineNode 조회 -> 입력 Asset 결정(Edge 기반) -> 입력 로드 -> Transform 실행
       -> 결과를 새 Asset으로 저장 -> NodeRun 상태 갱신.
-media_set 입력(PDF/이미지 추출)과 dataset 입력(일반 transform)을 분기 처리한다.
+mediaset 입력(PDF/이미지 추출)과 dataset 입력(일반 transform)을 분기 처리한다.
 """
 import inspect
 
@@ -70,7 +70,7 @@ async def execute_node(session: AsyncSession, node_id: int, owner_id: int) -> No
         transform_cls = get_transform(node.kind)
         params = transform_cls.Params(**node.params)
 
-        # media_set(비정형) 입력: PDF/이미지 추출처럼 run_media()를 쓰는 노드
+        # mediaset(비정형) 입력: PDF/이미지 추출처럼 run_media()를 쓰는 노드
         if hasattr(transform_cls, "run_media"):
             asset = await get_asset(session, input_asset_ids[0])
             result: TransformResult = await transform_cls().run_media(asset.storage_key, params)

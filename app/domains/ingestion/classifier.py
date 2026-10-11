@@ -16,5 +16,5 @@ def classify_by_extension(filename: str) -> AssetKind:
     if ext in DATASET_EXT:
         return AssetKind.DATASET
     if ext in MEDIA_EXT:
-        return AssetKind.MEDIA_SET
+        return AssetKind.MEDIASET
     raise UnsupportedFileType(ext)

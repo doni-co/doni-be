@@ -16,26 +16,26 @@ from app.infrastructure.storage import garage
 
 
 # --- PDF에서 텍스트 추출 ---
-# 원본은 media_set Asset이므로 Transform.run()의 inputs 규약(columns, rows)과는 다르게,
+# 원본은 mediaset Asset이므로 Transform.run()의 inputs 규약(columns, rows)과는 다르게,
 # use_cases/execute_node.py가 media_set일 때는 원본 Asset의 storage_key를 직접 넘겨준다.
 
 @register
 class ExtractTextFromPdf(Transform):
     name = "extract_text_from_pdf"
-    input_count = 1  # media_set Asset 1개
+    input_count = 1  # mediaset Asset 1개
 
     class Params(BaseModel):
         pass
 
     async def run_media(self, storage_key: str, params: "ExtractTextFromPdf.Params") -> TransformResult:
-        """media_set 입력 전용 실행 경로. base.Transform.run()과 시그니처가 다르므로
+        """mediaset 입력 전용 실행 경로. base.Transform.run()과 시그니처가 다르므로
         use_cases/execute_node.py가 kind in {pdf, image} 추출 노드일 때 이쪽을 호출한다."""
         url = garage.presigned_url(storage_key)
         text = await ai_client.extract_text_from_image(url)  # PDF도 같은 AI 엔드포인트 사용 (서버가 내부 분기)
         return TransformResult(columns=["text"], rows=[{"text": text}])
 
     def run(self, inputs, params):
-        raise NotImplementedError("media_set 입력은 run_media()를 사용한다")
+        raise NotImplementedError("mediaset 입력은 run_media()를 사용한다")
 
 
 # --- 이미지에서 텍스트 추출 ---
@@ -54,7 +54,7 @@ class ExtractTextFromImage(Transform):
         return TransformResult(columns=["text"], rows=[{"text": text}])
 
     def run(self, inputs, params):
-        raise NotImplementedError("media_set 입력은 run_media()를 사용한다")
+        raise NotImplementedError("mediaset 입력은 run_media()를 사용한다")
 
 
 # --- 엑셀에서 JSON 추출 ---
@@ -72,7 +72,7 @@ class ExtractJsonFromExcel(Transform):
         raise NotImplementedError("엑셀 파싱(openpyxl 등) 연결 대기 중")
 
     def run(self, inputs, params):
-        raise NotImplementedError("media_set 입력은 run_media()를 사용한다")
+        raise NotImplementedError("mediaset 입력은 run_media()를 사용한다")
 
 
 # --- 배열 펼치기 (Explode Array) ---

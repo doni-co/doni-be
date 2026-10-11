@@ -3,7 +3,7 @@ import enum
 
 class AssetKind(str, enum.Enum):
     DATASET = "dataset"
-    MEDIA_SET = "media_set"
+    MEDIASET = "mediaset"
 
 
 class AssetStatus(str, enum.Enum):

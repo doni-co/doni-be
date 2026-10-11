@@ -7,7 +7,7 @@ from app.models.enums import AssetKind, AssetOrigin, AssetStatus
 
 
 class Asset(Base):
-    """원본 업로드(media_set/dataset)와 노드 실행 결과(항상 dataset)를 모두 표현하는 단일 테이블.
+    """원본 업로드(mediaset/dataset)와 노드 실행 결과(항상 dataset)를 모두 표현하는 단일 테이블.
     업로드 파일 하나당 Asset 하나(1:1)이므로 MediaSet/Dataset을 별도 테이블로 나누지 않는다.
     온톨로지 모듈이 Entity 타입으로 승격시킬 때도 이 테이블(kind=dataset)을 참조하게 된다."""
     __tablename__ = "assets"
