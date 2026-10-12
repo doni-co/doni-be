@@ -4,7 +4,7 @@ from pathlib import Path
 from app.models.enums import AssetKind
 
 DATASET_EXT = {".csv", ".tsv", ".parquet", ".json"}
-MEDIA_EXT = {".pdf", ".ppt", ".pptx", ".hwp", ".hwpx", ".png", ".jpg", ".jpeg", ".docx", ".xlsx"}
+MEDIA_EXT = {".pdf", ".ppt", ".pptx", ".hwp", ".hwpx", ".png", ".jpg", ".jpeg", ".docx", ".xlsx", ".txt"}
 
 
 class UnsupportedFileType(Exception):
@@ -16,5 +16,5 @@ def classify_by_extension(filename: str) -> AssetKind:
     if ext in DATASET_EXT:
         return AssetKind.DATASET
     if ext in MEDIA_EXT:
-        return AssetKind.MEDIA_SET
+        return AssetKind.MEDIASET
     raise UnsupportedFileType(ext)

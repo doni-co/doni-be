@@ -43,24 +43,28 @@ uv run pytest
 
 ```
 app/
-  core/          설정, 스토리지 경계, AI 서버 호출 경계, Celery 설정 (전부 공통 인프라)
-  db/            DB 세션, Base
-  models/        전체 도메인의 SQLAlchemy 모델을 한곳에 모음 (Alembic 누락 방지 목적)
+  core/            config, celery_app (api/worker가 같은 Redis를 보게 하는 접속점)
+  db/              DB 세션, Base
+  models/          전체 도메인의 SQLAlchemy 모델을 한곳에 모음 (Alembic 누락 방지 목적)
+    asset.py         Asset(원본+결과 메타데이터) + AssetRow(실제 행)
+    pipeline.py       Pipeline, PipelineNode, PipelineEdge, NodeRun (PipelineRun 없음)
+  infrastructure/
+    storage/garage.py   원본/프리사인 URL 경계 (Garage, S3 호환)
+    ai/client.py        AI 서버 호출 경계 (이미지→텍스트, LLM 컬럼 생성)
   domains/
-    auth/        로그인 (JWT)
-    ingestion/   업로드 + 확장자 기반 dataset/media_set 분류 (조율 레이어)
-    media/       MediaSet (비정형 원천)
-    datasets/    Dataset (정형) — 온톨로지 모듈과의 접점이 될 예정
+    auth/            로그인 (JWT)
+    ingestion/        업로드 -> Garage 저장 -> uploads 기록 -> 분류 -> Asset 등록
+    assets/           Asset/AssetRow 전담 쿼리 (다른 도메인은 이 service로만 접근)
     pipelines/
-      transforms/      노드 카탈로그 (파이프라인 빌더 메뉴와 매핑)
-        column_ops.py    데이터 변환 > 컬럼명/ 데이터 타입 통일, 컬럼 선택, 컬럼 제거, 컬럼명 표준화
-        extract_ops.py   데이터 변환 > PDF에서 텍스트/ 이미지에서 텍스트/ 엑셀에서 JSON 추출, 배열 펼치기, 구조체 필드 추출
-        cleanup_ops.py   데이터 변환 > 데이터 표준화, 문자 정리, 필터
-        combine/         데이터 결합(join) / 데이터 통합(union)
-        llm_column.py    AI 사용
-      output/      데이터 출력 (새 Dataset / 새 Entity 타입) — Transform과 다른 유스케이스라 분리
-      service.py   그래프 검증 + 상태 전이 + Run 오케스트레이션 (순수 로직을 별도 레이어로 안 뗌)
-      tasks.py     Celery 워커 작업 (API 프로세스와 분리 실행)
+      rules/            순수 규칙: graph_rules(순환/타입 검증), state_rules(NodeRun 상태 전이)
+      nodes/            노드 카탈로그 (메뉴 "데이터 변환/결합/통합/AI 사용"과 매핑)
+        transform/        데이터 변환: column_ops, extract_ops, cleanup_ops
+        combine/          데이터 결합(join) / 데이터 통합(union)
+        ai/               AI 사용: llm_column
+      output/            데이터 출력: to_dataset, to_entity_type
+      use_cases/
+        execute_node.py    노드 클릭 -> 실행의 핵심 유스케이스 (load -> transform -> save)
+      tasks.py           Celery 작업 (node_id만 받아 워커가 execute_node를 수행)
 tests/
 migrations/        Alembic
 deploy/            Dockerfile, docker-compose(base/local/cloud)

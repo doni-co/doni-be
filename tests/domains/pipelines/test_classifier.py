@@ -9,7 +9,7 @@ def test_dataset_extension():
 
 
 def test_media_extension():
-    assert classify_by_extension("report.pdf") is AssetKind.MEDIA_SET
+    assert classify_by_extension("report.pdf") is AssetKind.MEDIASET
 
 
 def test_unsupported_extension():
