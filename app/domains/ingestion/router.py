@@ -4,6 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.session import get_session
 from app.domains.ingestion.classifier import UnsupportedFileType
 from app.domains.ingestion.service import upload_file
+from app.domains.ingestion.storage_key import safe_filename
 
 router = APIRouter(prefix="/uploads", tags=["ingestion"])
 
@@ -15,7 +16,11 @@ async def upload_route(
     session: AsyncSession = Depends(get_session),
 ):
     try:
-        return await upload_file(session, owner_id, file.filename, file.file)
+        filename = safe_filename(file.filename or "")
+    except ValueError as e:
+        raise HTTPException(400, str(e)) from e
+    try:
+        return await upload_file(session, owner_id, filename, file.file)
     except UnsupportedFileType as e:
         # 파일은 이미 storage + uploads 테이블에 기록된 상태 (status=unsupported)
         raise HTTPException(400, f"unsupported file type: {e}") from e

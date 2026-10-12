@@ -1,10 +1,12 @@
 from typing import BinaryIO
 
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core import storage
 from app.domains.assets.service import register_asset
 from app.domains.ingestion.classifier import UnsupportedFileType, classify_by_extension
+from app.domains.ingestion.storage_key import build_storage_key, safe_filename
 from app.models.enums import AssetKind, UploadStatus
 from app.models.upload import Upload
 
@@ -43,8 +45,20 @@ async def mark_failed(session: AsyncSession, upload_id: int, status: UploadStatu
     return upload
 
 
+async def count_uploads(session: AsyncSession, owner_id: int, filename: str) -> int:
+    """같은 사용자가 같은 이름으로 올린 기록 수. 분류에 실패한 업로드도 파일은 이미 저장돼 있으므로 센다."""
+    result = await session.execute(
+        select(func.count()).select_from(Upload).where(
+            Upload.owner_id == owner_id, Upload.original_filename == filename
+        )
+    )
+    return result.scalar_one()
+
+
 async def upload_file(session: AsyncSession, owner_id: int, filename: str, fileobj: BinaryIO) -> dict:
-    key = f"uploads/{owner_id}/{filename}"
+    filename = safe_filename(filename)
+    version = await count_uploads(session, owner_id, filename) + 1       # 같은 이름이면 _v2, _v3 ... (원본을 덮어쓰지 않음)
+    key = build_storage_key(owner_id, filename, version)
     storage.save(key, fileobj)                                           # ① 파일 바이트 저장
 
     upload = await register_upload(session, owner_id, filename, key)     # ② 공통 업로드 기록 (분류 전에 바로 남김)
