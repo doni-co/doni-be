@@ -1,12 +1,14 @@
 """DB/엔진 없이 도는 순수 로직 테스트. cleanup_ops의 순수 함수와 Params 검증을 직접 검증한다."""
 import copy
+import json
 import time
 
 import pytest
 from pydantic import ValidationError
 
-from app.domains.pipelines.transforms import registry
-from app.domains.pipelines.transforms.cleanup_ops import (
+from app.domains.pipelines.nodes import registry
+from app.domains.pipelines.nodes.base import TransformResult
+from app.domains.pipelines.nodes.transform.cleanup_ops import (
     CleanText,
     Filter,
     StandardizeData,
@@ -27,6 +29,47 @@ def rows_of(*values, col="type"):
 def test_registered():
     for name in ("standardize_data", "clean_text", "filter"):
         assert name in registry.all_names()
+
+
+# ----------------------------------------------- run() = execute_node가 부르는 진입점
+
+def test_run_wrappers_return_transform_result():
+    """execute_node처럼 registry에서 클래스를 찾아 Params(**dict)로 만든 뒤 run([(columns, rows)], params)로 부른다."""
+    cases = [
+        ("standardize_data", {"mappings": {"type": {"Veh": "Vehicle"}}}, ["Vehicle", "Truck"]),
+        ("clean_text", {"columns": ["type"], "pattern": "[aeiou]"}, ["Vhcl", "Trck"]),
+        ("filter", {"conditions": [{"column": "type", "op": "eq", "value": "Truck"}]}, ["Truck"]),
+    ]
+    for name, raw_params, expected in cases:
+        node_cls = registry.get(name)
+        params = node_cls.Params(**raw_params)
+        rows = rows_of("Veh", "Truck") if name != "clean_text" else rows_of("Vehicle", "Truck")
+        result = node_cls().run([(COLS, rows)], params)
+        assert isinstance(result, TransformResult)
+        assert result.columns == COLS
+        assert [r["type"] for r in result.rows] == expected
+
+
+def test_run_does_not_change_columns_or_input():
+    rows = rows_of("Veh")
+    snapshot = copy.deepcopy(rows)
+    cols = list(COLS)
+    StandardizeData().run([(cols, rows)], StandardizeData.Params(mappings={"type": {"Veh": "Vehicle"}}))
+    assert (cols, rows) == (COLS, snapshot)
+
+
+def test_functions_work_on_json_round_tripped_rows():
+    """AssetRow.data는 JSONB라 json을 거친 값(str/number/bool/null/list)만 들어온다."""
+    rows = json.loads(json.dumps([
+        {"id": 1, "type": "Veh", "amount": "₩1,200,000원", "name": None},
+        {"id": 2, "type": "Truck", "amount": "₩300원", "name": "x"},
+    ]))
+    mapped = standardize_values(rows, COLS, StandardizeData.Params(mappings={"type": {"Veh": "Vehicle"}}))
+    cleaned = clean_text(mapped, COLS, CleanText.Params(columns=["amount"], pattern="[₩,원]"))
+    kept = filter_rows(cleaned, COLS, Filter.Params(conditions=[{"column": "name", "op": "is_not_null"}]))
+    assert [r["type"] for r in cleaned] == ["Vehicle", "Truck"]
+    assert [r["amount"] for r in cleaned] == ["1200000", "300"]
+    assert [r["id"] for r in kept] == [2]
 
 
 # ------------------------------------------------------- standardize_values

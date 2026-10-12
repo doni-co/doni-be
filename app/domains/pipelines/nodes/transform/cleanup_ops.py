@@ -1,11 +1,8 @@
 """데이터 변환 > 정리: 데이터 표준화, 문자 정리, 필터.
-
-변환 로직은 엔진(pandas/polars/DuckDB 등)에 의존하지 않는 순수 함수로 두었다.
-    rows: list[dict]  (행 목록),  columns: 컬럼명 목록 (Dataset.schema_def의 키)
+순수 함수로 두어 DB/엔진에 의존하지 않는다. rows: AssetRow.data 목록, columns: Asset.schema_def 컬럼 목록.
 입력을 변경하지 않고 새 리스트를 반환하므로, 같은 입력 + 같은 params면 항상 같은 결과다.
-공통 데이터 I/O(입력 id -> rows, rows -> 새 Dataset)가 정해지면 run()에서
-`load -> 아래 순수 함수 -> save` 로만 연결하면 된다.
-오류는 전부 ValueError이고, tasks.py가 str(e)를 NodeRun.error에 기록한다.
+입력 로드/결과 저장은 use_cases/execute_node.py가 담당하고, 여기 run()은 순수 함수를 부르는 얇은 껍데기다.
+오류는 전부 ValueError이고, execute_node가 str(e)를 NodeRun.error에 기록한다.
 """
 from collections.abc import Sequence
 from typing import Any, Literal
@@ -13,12 +10,8 @@ from typing import Any, Literal
 import re2
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-from app.domains.pipelines.transforms.base import Transform, TransformContext, TransformResult
-from app.domains.pipelines.transforms.registry import register
-
-Rows = list[dict[str, Any]]
-
-_NOT_CONNECTED = "공통 데이터 I/O 연결 대기 중: 입력 id -> rows 로드, rows -> 새 Dataset 저장이 필요하다"
+from app.domains.pipelines.nodes.base import Rows, Transform, TransformResult
+from app.domains.pipelines.nodes.registry import register
 
 
 def _require_columns(columns: Sequence[str], used: Sequence[str]) -> None:
@@ -60,8 +53,6 @@ def standardize_values(rows: Rows, columns: Sequence[str], params: "StandardizeD
 @register
 class StandardizeData(Transform):
     name = "standardize_data"
-    input_kinds = ("dataset",)
-    output_kind = "dataset"
 
     class Params(BaseModel):
         mappings: dict[str, dict[str, str]] = Field(min_length=1)  # {컬럼명: {원래값: 새값}}
@@ -84,8 +75,9 @@ class StandardizeData(Transform):
                     seen[norm] = new
             return self
 
-    async def run(self, inputs, params, ctx: TransformContext) -> TransformResult:
-        raise NotImplementedError(_NOT_CONNECTED)
+    def run(self, inputs, params: "StandardizeData.Params") -> TransformResult:
+        columns, rows = inputs[0]
+        return TransformResult(columns=list(columns), rows=standardize_values(rows, columns, params))
 
 
 # ---------------------------------------------------------------------------
@@ -116,8 +108,6 @@ def clean_text(rows: Rows, columns: Sequence[str], params: "CleanText.Params") -
 @register
 class CleanText(Transform):
     name = "clean_text"
-    input_kinds = ("dataset",)
-    output_kind = "dataset"
 
     class Params(BaseModel):
         columns: list[str] = Field(min_length=1)
@@ -135,8 +125,9 @@ class CleanText(Transform):
                 ) from None
             return v
 
-    async def run(self, inputs, params, ctx: TransformContext) -> TransformResult:
-        raise NotImplementedError(_NOT_CONNECTED)
+    def run(self, inputs, params: "CleanText.Params") -> TransformResult:
+        columns, rows = inputs[0]
+        return TransformResult(columns=list(columns), rows=clean_text(rows, columns, params))
 
 
 # ---------------------------------------------------------------------------
@@ -209,7 +200,7 @@ def _comparable(actual: Any, expected: Any, column: str, row_index: int, op: str
     if _kind(actual) != _kind(expected):
         raise ValueError(
             f"row {row_index}: column '{column}' ({_kind(actual)}) cannot be compared "
-            f"with {_kind(expected)} using '{op}'; cast the column type first"
+            f"with {_kind(expected)} using '{op}'; cast the column type first (cast_type node)"
         )
 
 
@@ -268,8 +259,6 @@ def filter_rows(rows: Rows, columns: Sequence[str], params: "Filter.Params") -> 
 @register
 class Filter(Transform):
     name = "filter"
-    input_kinds = ("dataset",)
-    output_kind = "dataset"
 
     class Params(BaseModel):
         mode: Literal["keep", "drop"] = "keep"      # keep: 조건을 만족하는 행만 남김 / drop: 만족하는 행 제거
@@ -285,5 +274,6 @@ class Filter(Transform):
                 raise ValueError(f"condition groups nested too deeply (max depth {_MAX_DEPTH})")
             return self
 
-    async def run(self, inputs, params, ctx: TransformContext) -> TransformResult:
-        raise NotImplementedError(_NOT_CONNECTED)
+    def run(self, inputs, params: "Filter.Params") -> TransformResult:
+        columns, rows = inputs[0]
+        return TransformResult(columns=list(columns), rows=filter_rows(rows, columns, params))
