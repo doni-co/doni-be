@@ -7,17 +7,23 @@ import boto3
 
 from app.core.config import settings
 
-_client = boto3.client(
-    "s3",
-    endpoint_url=settings.garage_endpoint_url,
-    region_name=settings.garage_region,
-    aws_access_key_id=settings.garage_access_key,
-    aws_secret_access_key=settings.garage_secret_key,
-)
+_client = None
+
+def _get_client():
+    global _client
+    if _client is None:
+        _client = boto3.client(
+            "s3",
+            endpoint_url=settings.garage_endpoint_url,
+            region_name=settings.garage_region,
+            aws_access_key_id=settings.garage_access_key,
+            aws_secret_access_key=settings.garage_secret_key,
+        )
+    return _client
 
 
-def save(key: str, fileobj: BinaryIO) -> str:
-    _client.upload_fileobj(fileobj, settings.garage_bucket, key)
+def save(key, fileobj):
+    _get_client().upload_fileobj(fileobj, settings.garage_bucket, key)
     return key
 
 

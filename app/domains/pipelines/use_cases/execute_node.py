@@ -10,6 +10,7 @@ import inspect
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.domains.pipelines import nodes  # noqa: F401  (import 시 전체 노드가 registry에 등록됨)
 from app.domains.assets.service import get_asset, get_rows, register_asset, save_rows
 from app.domains.pipelines.nodes.base import TransformResult
 from app.domains.pipelines.nodes.registry import get as get_transform
