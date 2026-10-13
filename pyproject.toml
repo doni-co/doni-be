@@ -16,6 +16,7 @@ dependencies = [
   "httpx",
   "pyjwt",
   "passlib[bcrypt]",
+  "google-re2",
 ]
 
 [project.optional-dependencies]
