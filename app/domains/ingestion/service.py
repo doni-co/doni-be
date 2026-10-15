@@ -2,14 +2,14 @@ from typing import BinaryIO
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core import storage
+from app.infrastructure.storage import garage
 from app.domains.assets.service import register_asset
 from app.domains.ingestion.classifier import UnsupportedFileType, classify_by_extension
 from app.models.enums import AssetKind, UploadStatus
 from app.models.upload import Upload
 
 # uploads 테이블 쿼리 함수. ingestion이 소유하는 테이블이고 upload_file과 한 세트로만 쓰이므로
-# 별도 파일로 나누지 않고 여기 둔다 (pipelines/service.py와 동일한 기준: 쿼리 + 오케스트레이션을 한 파일에).
+# 별도 파일로 나누지 않고 여기 둔다 (pipelines 쪽과 동일한 기준: 쿼리 + 오케스트레이션을 한 파일에).
 
 
 async def register_upload(session: AsyncSession, owner_id: int, filename: str, storage_key: str) -> Upload:
@@ -45,7 +45,7 @@ async def mark_failed(session: AsyncSession, upload_id: int, status: UploadStatu
 
 async def upload_file(session: AsyncSession, owner_id: int, filename: str, fileobj: BinaryIO) -> dict:
     key = f"uploads/{owner_id}/{filename}"
-    storage.save(key, fileobj)                                           # ① 파일 바이트 저장
+    garage.save(key, fileobj)                                            # ① 원본 바이트 저장 (Garage)
 
     upload = await register_upload(session, owner_id, filename, key)     # ② 공통 업로드 기록 (분류 전에 바로 남김)
 

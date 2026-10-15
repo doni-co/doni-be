@@ -14,6 +14,7 @@ dependencies = [
   "celery[redis]",
   "redis",
   "httpx",
+  "boto3",
   "pyjwt",
   "passlib[bcrypt]",
   "google-re2",
@@ -27,3 +28,8 @@ asyncio_mode = "auto"
 
 [tool.ruff]
 line-length = 100
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+]
