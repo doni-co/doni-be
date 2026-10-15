@@ -28,20 +28,20 @@ def save(key, fileobj):
 
 
 def open_file(key: str) -> BinaryIO:
-    obj = _client.get_object(Bucket=settings.garage_bucket, Key=key)
+    obj = _get_client().get_object(Bucket=settings.garage_bucket, Key=key)
     return obj["Body"]  # botocore StreamingBody, BinaryIO처럼 .read() 가능
 
 
 def exists(key: str) -> bool:
     try:
-        _client.head_object(Bucket=settings.garage_bucket, Key=key)
+        _get_client().head_object(Bucket=settings.garage_bucket, Key=key)
         return True
-    except _client.exceptions.ClientError:
+    except _get_client().exceptions.ClientError:
         return False
 
 
 def presigned_url(key: str, expires_in: int = 3600) -> str:
     """AI 서버 등 외부로 원본 위치를 직접 넘겨줄 때 사용 (바이트를 직접 안 보내도 되게)."""
-    return _client.generate_presigned_url(
+    return _get_client().generate_presigned_url(
         "get_object", Params={"Bucket": settings.garage_bucket, "Key": key}, ExpiresIn=expires_in
     )

@@ -35,8 +35,14 @@ async def get_asset(session: AsyncSession, asset_id: int) -> Asset | None:
 
 
 async def save_rows(session: AsyncSession, asset_id: int, columns: list[str], rows: list[dict]) -> None:
-    """transform/join/union 결과 행을 저장하고, Asset의 schema_def/row_count를 갱신한다."""
+    """transform/join/union 결과 행을 저장하고, Asset의 schema_def/row_count를 채운다.
+    [파일]과 [파이프라인빌더]의 데이터는 갱신하지 않는다(갱신은 온톨로지). 한 Asset에는 한 번만 저장할 수 있고,
+    다시 실행하면 새 Asset을 만들어 저장해야 한다."""
     asset = await session.get(Asset, asset_id)
+    if asset is None:
+        raise ValueError(f"asset not found: {asset_id}")
+    if asset.row_count is not None:
+        raise ValueError(f"asset {asset_id} already has data; assets are immutable")
     asset.schema_def = {"columns": columns}
     asset.row_count = len(rows)
 

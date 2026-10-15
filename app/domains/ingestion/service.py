@@ -1,10 +1,12 @@
 from typing import BinaryIO
 
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.infrastructure.storage import garage
 from app.domains.assets.service import register_asset
 from app.domains.ingestion.classifier import UnsupportedFileType, classify_by_extension
+from app.domains.ingestion.storage_key import build_display_name, build_storage_key, safe_filename
+from app.infrastructure.storage import garage
 from app.models.enums import AssetKind, UploadStatus
 from app.models.upload import Upload
 
@@ -43,11 +45,26 @@ async def mark_failed(session: AsyncSession, upload_id: int, status: UploadStatu
     return upload
 
 
+async def count_uploads(session: AsyncSession, owner_id: int, filename: str) -> int:
+    """같은 사용자가 같은 이름으로 올린 기록 수. 분류에 실패한 업로드도 파일은 이미 저장돼 있으므로 센다."""
+    result = await session.execute(
+        select(func.count()).select_from(Upload).where(
+            Upload.owner_id == owner_id, Upload.original_filename == filename
+        )
+    )
+    return result.scalar_one()
+
+
 async def upload_file(session: AsyncSession, owner_id: int, filename: str, fileobj: BinaryIO) -> dict:
-    key = f"uploads/{owner_id}/{filename}"
+    filename = safe_filename(filename)
+    version = await count_uploads(session, owner_id, filename) + 1       # 같은 이름이면 2, 3 ... (파일은 절대 갱신하지 않는다)
+    key = build_storage_key(owner_id, filename, version)
+    while garage.exists(key):                                            # 이미 있는 키는 덮어쓰지 않고 다음 버전으로 (동시 업로드 방어)
+        version += 1
+        key = build_storage_key(owner_id, filename, version)
     garage.save(key, fileobj)                                            # ① 원본 바이트 저장 (Garage)
 
-    upload = await register_upload(session, owner_id, filename, key)     # ② 공통 업로드 기록 (분류 전에 바로 남김)
+    upload = await register_upload(session, owner_id, filename, key)     # ② 공통 업로드 기록 (분류 전에 바로 남김). 원래 파일명을 그대로 기록
 
     try:
         kind = classify_by_extension(filename)                          # ③ 분류
@@ -56,8 +73,8 @@ async def upload_file(session: AsyncSession, owner_id: int, filename: str, fileo
         raise
 
     ext = filename.rsplit(".", 1)[-1] if "." in filename else ""
-    asset = await register_asset(                                         # ④ Asset 등록 (메타데이터 DB 저장)
-        session, owner_id=owner_id, name=filename, kind=kind, storage_key=key, ext=ext,
+    asset = await register_asset(                                         # ④ Asset 등록 (메타데이터 DB 저장). 같은 이름이면 "name (2).csv"
+        session, owner_id=owner_id, name=build_display_name(filename, version), kind=kind, storage_key=key, ext=ext,
     )
 
     await mark_classified(session, upload.id, kind, asset.id)            # ⑤ 업로드 기록에 분류 결과 연결
