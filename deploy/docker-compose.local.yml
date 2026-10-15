@@ -7,6 +7,9 @@ services:
     redis:
         ports: ['6379:6379']
 
+    garage:
+        ports: ['3900:3900']
+
     api:
         env_file: ../.env.local
         command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload

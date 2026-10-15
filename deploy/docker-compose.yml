@@ -19,20 +19,50 @@ services:
             interval: 5s
             retries: 10
 
+    garage:
+        image: dxflrs/garage:v2.4.1
+        command: ['/garage', 'server', '--single-node', '--default-bucket']
+        environment:
+            GARAGE_DEFAULT_ACCESS_KEY: ${GARAGE_ACCESS_KEY:-GK8478500a1aa2c94a88205a1b}
+            GARAGE_DEFAULT_SECRET_KEY: ${GARAGE_SECRET_KEY:-a2e71fa16582373922502d0733b70490089814ee36231bfe6f5cb7fcb7075f25}
+            GARAGE_DEFAULT_BUCKET: ${GARAGE_BUCKET:-doni}
+        volumes:
+            - ./garage.toml:/etc/garage.toml:ro
+            - garage_meta:/var/lib/garage/meta
+            - garage_data:/var/lib/garage/data
+
     api:
         build:
             context: ..
             dockerfile: deploy/Dockerfile
         command: uvicorn app.main:app --host 0.0.0.0 --port 8000
+        environment:
+            GARAGE_ENDPOINT_URL: http://garage:3900
+            GARAGE_PUBLIC_URL: ${GARAGE_PUBLIC_URL:-}
+            GARAGE_ACCESS_KEY: ${GARAGE_ACCESS_KEY:-GK8478500a1aa2c94a88205a1b}
+            GARAGE_SECRET_KEY: ${GARAGE_SECRET_KEY:-a2e71fa16582373922502d0733b70490089814ee36231bfe6f5cb7fcb7075f25}
+            GARAGE_BUCKET: ${GARAGE_BUCKET:-doni}
         depends_on:
             db: { condition: service_healthy }
             redis: { condition: service_healthy }
+            garage: { condition: service_started }
 
     worker:
         build:
             context: ..
             dockerfile: deploy/Dockerfile
         command: celery -A app.core.celery_app worker --loglevel=info
+        environment:
+            GARAGE_ENDPOINT_URL: http://garage:3900
+            GARAGE_PUBLIC_URL: ${GARAGE_PUBLIC_URL:-}
+            GARAGE_ACCESS_KEY: ${GARAGE_ACCESS_KEY:-GK8478500a1aa2c94a88205a1b}
+            GARAGE_SECRET_KEY: ${GARAGE_SECRET_KEY:-a2e71fa16582373922502d0733b70490089814ee36231bfe6f5cb7fcb7075f25}
+            GARAGE_BUCKET: ${GARAGE_BUCKET:-doni}
         depends_on:
             db: { condition: service_healthy }
             redis: { condition: service_healthy }
+            garage: { condition: service_started }
+
+volumes:
+    garage_meta:
+    garage_data:

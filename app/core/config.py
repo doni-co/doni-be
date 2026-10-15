@@ -11,5 +11,12 @@ class Settings(BaseSettings):
     ai_server_url: str = "http://localhost:9000"
     jwt_secret: str = "change-me"
 
+    garage_endpoint_url: str = "http://localhost:3900"
+    garage_public_url: str = ""  # 외부(AI 서버 등)에서 접근하는 주소. 비어 있으면 endpoint_url 사용
+    garage_region: str = "garage"
+    garage_access_key: str = ""
+    garage_secret_key: str = ""
+    garage_bucket: str = "doni"
+
 
 settings = Settings()
