@@ -12,6 +12,8 @@ docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.local.yml u
 curl localhost:8000/health
 ```
 
+원본 파일 저장소(Garage)도 compose에 포함되어 있습니다. 개발용 키는 `.env.example`에 있고 버킷 `doni`는 처음 띄울 때 자동으로 만들어집니다. 운영 비밀값은 별도로 주입합니다.
+
 ## 배포 환경별 실행
 
 ```bash
