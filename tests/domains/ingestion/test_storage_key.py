@@ -1,11 +1,11 @@
-"""DB/스토리지 없이 도는 테스트: 저장 키 규칙(순수 함수)과, upload_file이 같은 이름을 덮어쓰지 않는지."""
+"""DB/스토리지 없이 도는 테스트: 저장 키·표시 이름 규칙(순수 함수)과, upload_file이 같은 이름을 덮어쓰지 않는지."""
 import io
 
 import pytest
 
 from app.domains.ingestion import service
 from app.domains.ingestion.classifier import UnsupportedFileType
-from app.domains.ingestion.storage_key import build_storage_key, safe_filename
+from app.domains.ingestion.storage_key import build_display_name, build_storage_key, safe_filename
 from app.models.asset import Asset
 from app.models.enums import UploadStatus
 from app.models.upload import Upload
@@ -23,6 +23,18 @@ from app.models.upload import Upload
 ])
 def test_build_storage_key(filename, version, expected):
     assert build_storage_key(7, filename, version) == expected
+
+
+@pytest.mark.parametrize(("filename", "version", "expected"), [
+    ("report.pdf", 1, "report.pdf"),            # 처음에는 그대로
+    ("report.pdf", 2, "report (2).pdf"),
+    ("report.pdf", 3, "report (3).pdf"),
+    ("archive.tar.gz", 2, "archive.tar (2).gz"),
+    ("README", 2, "README (2)"),
+    ("입찰 데이터.csv", 2, "입찰 데이터 (2).csv"),
+])
+def test_build_display_name(filename, version, expected):
+    assert build_display_name(filename, version) == expected
 
 
 @pytest.mark.parametrize(("raw", "expected"), [
@@ -44,6 +56,8 @@ def test_safe_filename_rejects_invalid(raw):
 def test_version_must_be_positive():
     with pytest.raises(ValueError, match="version"):
         build_storage_key(1, "a.csv", 0)
+    with pytest.raises(ValueError, match="version"):
+        build_display_name("a.csv", 0)
 
 
 def test_key_stays_under_owner_prefix():
@@ -90,7 +104,8 @@ def env(monkeypatch):
     async def fake_count(session, owner_id, filename):
         return sum(1 for u in session.of(Upload) if u.owner_id == owner_id and u.original_filename == filename)
 
-    monkeypatch.setattr(service.storage, "save", fake_save)
+    monkeypatch.setattr(service.garage, "save", fake_save)
+    monkeypatch.setattr(service.garage, "exists", lambda key: key in saved)
     monkeypatch.setattr(service, "count_uploads", fake_count)  # count_uploads의 SQL 자체는 DB가 있어야 검증 가능
     return FakeSession(), saved
 
@@ -106,15 +121,39 @@ async def test_same_filename_does_not_overwrite(env):
     assert first["asset_id"] != second["asset_id"]
 
 
-async def test_asset_keeps_original_name_and_points_to_versioned_key(env):
-    session, _ = env
-    await service.upload_file(session, 1, "sales.csv", io.BytesIO(b"x"))
-    await service.upload_file(session, 1, "sales.csv", io.BytesIO(b"y"))
-    assets = session.of(Asset)
+async def test_same_name_and_same_content_are_still_separate_assets(env):
+    """이름과 내용이 모두 같아도 합치지 않고 따로 만든다 (같은 데이터를 다르게 정제할 수 있다)."""
+    session, saved = env
+    first = await service.upload_file(session, 1, "same.csv", io.BytesIO(b"a,b\n1,2\n"))
+    second = await service.upload_file(session, 1, "same.csv", io.BytesIO(b"a,b\n1,2\n"))
+    assert first["asset_id"] != second["asset_id"]
+    assert len(saved) == 2
 
-    assert [a.name for a in assets] == ["sales.csv", "sales.csv"]           # 사용자에게 보이는 이름은 그대로
-    assert [a.storage_key for a in assets] == ["uploads/1/sales_v1.csv", "uploads/1/sales_v2.csv"]
-    assert [u.storage_key for u in session.of(Upload)] == [a.storage_key for a in assets]
+
+async def test_asset_display_name_gets_number_but_upload_keeps_original(env):
+    session, _ = env
+    for _ in range(3):
+        await service.upload_file(session, 1, "sales.csv", io.BytesIO(b"x"))
+
+    assert [a.name for a in session.of(Asset)] == ["sales.csv", "sales (2).csv", "sales (3).csv"]
+    assert [u.original_filename for u in session.of(Upload)] == ["sales.csv"] * 3
+    assert [a.storage_key for a in session.of(Asset)] == [
+        "uploads/1/sales_v1.csv", "uploads/1/sales_v2.csv", "uploads/1/sales_v3.csv",
+    ]
+    assert [u.storage_key for u in session.of(Upload)] == [a.storage_key for a in session.of(Asset)]
+
+
+async def test_existing_key_is_never_overwritten(env):
+    """카운트가 어긋나도(동시 업로드, 옛 데이터) 이미 있는 키는 덮어쓰지 않고 다음 버전으로 저장한다."""
+    session, saved = env
+    saved["uploads/1/a_v1.csv"] = b"existing"
+    saved["uploads/1/a_v2.csv"] = b"existing too"
+    await service.upload_file(session, 1, "a.csv", io.BytesIO(b"new"))
+
+    assert saved["uploads/1/a_v1.csv"] == b"existing"
+    assert saved["uploads/1/a_v2.csv"] == b"existing too"
+    assert saved["uploads/1/a_v3.csv"] == b"new"
+    assert session.of(Asset)[0].name == "a (3).csv"  # 표시 번호도 실제 저장된 버전과 같다
 
 
 async def test_versions_are_per_owner_and_per_filename(env):
