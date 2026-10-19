@@ -1,10 +1,17 @@
-from typing import BinaryIO
+import asyncio
+import hashlib
+import io
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domains.assets.service import register_asset
-from app.domains.ingestion.classifier import UnsupportedFileType, classify_by_extension
+from app.domains.assets.service import register_asset, save_rows
+from app.domains.ingestion.classifier import (
+    UnsupportedFileType,
+    classify_by_extension,
+    guess_content_type,
+)
+from app.domains.ingestion.parsers import PARSEABLE_EXT, InvalidFileContent, parse_tabular
 from app.domains.ingestion.storage_key import build_display_name, build_storage_key, safe_filename
 from app.infrastructure.storage import garage
 from app.models.enums import AssetKind, UploadStatus
@@ -55,14 +62,22 @@ async def count_uploads(session: AsyncSession, owner_id: int, filename: str) -> 
     return result.scalar_one()
 
 
-async def upload_file(session: AsyncSession, owner_id: int, filename: str, fileobj: BinaryIO) -> dict:
+async def upload_file(
+    session: AsyncSession, owner_id: int, filename: str, data: bytes, content_type: str | None = None
+) -> dict:
     filename = safe_filename(filename)
     version = await count_uploads(session, owner_id, filename) + 1       # 같은 이름이면 2, 3 ... (파일은 절대 갱신하지 않는다)
     key = build_storage_key(owner_id, filename, version)
-    while garage.exists(key):                                            # 이미 있는 키는 덮어쓰지 않고 다음 버전으로 (동시 업로드 방어)
+    while await asyncio.to_thread(garage.exists, key):                   # 이미 있는 키는 덮어쓰지 않고 다음 버전으로 (동시 업로드 방어)
         version += 1
         key = build_storage_key(owner_id, filename, version)
-    garage.save(key, fileobj)                                            # ① 원본 바이트 저장 (Garage)
+
+    size_bytes = len(data)                                               # 원본 메타데이터 (무결성 확인용, 중복 제거에는 쓰지 않는다)
+    sha256 = hashlib.sha256(data).hexdigest()
+    if not content_type or content_type == "application/octet-stream":   # 클라이언트가 종류를 모르면 확장자로 정한다
+        content_type = guess_content_type(filename)
+
+    await asyncio.to_thread(garage.save, key, io.BytesIO(data))          # ① 원본 바이트 저장 (Garage). boto3는 동기라 스레드에서 실행
 
     upload = await register_upload(session, owner_id, filename, key)     # ② 공통 업로드 기록 (분류 전에 바로 남김). 원래 파일명을 그대로 기록
 
@@ -73,9 +88,21 @@ async def upload_file(session: AsyncSession, owner_id: int, filename: str, fileo
         raise
 
     ext = filename.rsplit(".", 1)[-1] if "." in filename else ""
+    parsed = None
+    if kind is AssetKind.DATASET and ext.lower() in PARSEABLE_EXT:      # 정형 파일은 행까지 읽어 둔다 (파이프라인 첫 노드의 입력)
+        try:
+            parsed = parse_tabular(data, ext)
+        except InvalidFileContent as e:
+            await mark_failed(session, upload.id, UploadStatus.INVALID, str(e))  # 원본은 이미 저장돼 남는다
+            raise
+
     asset = await register_asset(                                         # ④ Asset 등록 (메타데이터 DB 저장). 같은 이름이면 "name (2).csv"
         session, owner_id=owner_id, name=build_display_name(filename, version), kind=kind, storage_key=key, ext=ext,
+        size_bytes=size_bytes, content_type=content_type, sha256=sha256,
     )
+    if parsed is not None:
+        columns, rows = parsed
+        await save_rows(session, asset.id, columns, rows)                # 행은 한 번만 저장된다 (assets.service.save_rows 가드)
 
     await mark_classified(session, upload.id, kind, asset.id)            # ⑤ 업로드 기록에 분류 결과 연결
 

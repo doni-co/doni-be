@@ -8,7 +8,7 @@ from app.models.enums import UploadStatus
 
 def test_upload_status_has_all_flow_states():
     names = {s.name for s in UploadStatus}
-    assert names == {"STORED", "CLASSIFIED", "UNSUPPORTED", "FAILED"}
+    assert names == {"STORED", "CLASSIFIED", "UNSUPPORTED", "FAILED", "INVALID"}
 
 
 def test_unsupported_file_type_is_catchable():

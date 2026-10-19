@@ -1,0 +1,14 @@
+# 개발용 설정. 운영에서는 rpc_secret 등 비밀값을 별도로 주입한다.
+metadata_dir = "/var/lib/garage/meta"
+data_dir = "/var/lib/garage/data"
+db_engine = "sqlite"
+replication_factor = 1
+
+rpc_bind_addr = "[::]:3901"
+rpc_public_addr = "127.0.0.1:3901"
+rpc_secret = "25bb18a52d21e351bbd36c73747b0768068800fdeada37f48b253c3fd28727fe"
+
+[s3_api]
+s3_region = "garage"
+api_bind_addr = "[::]:3900"
+root_domain = ".s3.garage.localhost"

@@ -4,22 +4,44 @@
 from typing import BinaryIO
 
 import boto3
+from botocore.config import Config
 
 from app.core.config import settings
 
 _client = None
+_presign_client = None
+
+
+def _new_client(endpoint_url: str):
+    return boto3.client(
+        "s3",
+        endpoint_url=endpoint_url,
+        region_name=settings.garage_region,
+        aws_access_key_id=settings.garage_access_key,
+        aws_secret_access_key=settings.garage_secret_key,
+        config=Config(
+            s3={"addressing_style": "path"},  # http://garage:3900/버킷/키 형태로 요청
+            request_checksum_calculation="when_required",  # boto3 1.36+ 기본 체크섬 헤더를 S3 호환 서버에 강제하지 않음
+            response_checksum_validation="when_required",
+        ),
+    )
+
 
 def _get_client():
     global _client
     if _client is None:
-        _client = boto3.client(
-            "s3",
-            endpoint_url=settings.garage_endpoint_url,
-            region_name=settings.garage_region,
-            aws_access_key_id=settings.garage_access_key,
-            aws_secret_access_key=settings.garage_secret_key,
-        )
+        _client = _new_client(settings.garage_endpoint_url)
     return _client
+
+
+def _get_presign_client():
+    """presigned URL은 서명에 호스트가 들어가므로, 외부 주소가 따로 있으면 그 주소로 서명한다."""
+    global _presign_client
+    if not settings.garage_public_url:
+        return _get_client()
+    if _presign_client is None:
+        _presign_client = _new_client(settings.garage_public_url)
+    return _presign_client
 
 
 def save(key, fileobj):
@@ -42,6 +64,6 @@ def exists(key: str) -> bool:
 
 def presigned_url(key: str, expires_in: int = 3600) -> str:
     """AI 서버 등 외부로 원본 위치를 직접 넘겨줄 때 사용 (바이트를 직접 안 보내도 되게)."""
-    return _get_client().generate_presigned_url(
+    return _get_presign_client().generate_presigned_url(
         "get_object", Params={"Bucket": settings.garage_bucket, "Key": key}, ExpiresIn=expires_in
     )

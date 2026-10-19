@@ -1,4 +1,6 @@
-from sqlalchemy import ForeignKey, String
+from datetime import datetime
+
+from sqlalchemy import DateTime, ForeignKey, String, func
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -21,6 +23,13 @@ class Asset(Base):
 
     storage_key: Mapped[str | None] = mapped_column(String(1024), nullable=True)  # Garage 경로 (원본이 있는 경우)
     ext: Mapped[str | None] = mapped_column(String(32), nullable=True)
+
+    # 원본 파일 메타데이터 (업로드 Asset만. 노드 결과 Asset은 NULL). sha256은 무결성 확인용이고 중복 제거에는 쓰지 않는다.
+    size_bytes: Mapped[int | None] = mapped_column(nullable=True)
+    content_type: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # 파일은 갱신하지 않으므로 생성 시각이 곧 수정 일시다 (프론트 [파일] 목록의 "수정 일시")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     schema_def: Mapped[dict | None] = mapped_column(JSONB, nullable=True)  # kind=dataset일 때만
     row_count: Mapped[int | None] = mapped_column(nullable=True)
