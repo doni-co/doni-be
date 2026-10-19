@@ -1,4 +1,6 @@
-from sqlalchemy import ForeignKey, String
+from datetime import datetime
+
+from sqlalchemy import ForeignKey, Index, String, UniqueConstraint, func, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -31,6 +33,10 @@ class PipelineNode(Base):
 
 class PipelineEdge(Base):
     __tablename__ = "pipeline_edges"
+    __table_args__ = (
+        # 한 노드의 포트(dst_port)에는 선이 하나만 들어올 수 있다 (예: join의 left 포트에 두 번 연결 금지).
+        UniqueConstraint("dst_node_id", "dst_port", name="uq_pipeline_edges_dst_node_port"),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     pipeline_id: Mapped[int] = mapped_column(ForeignKey("pipelines.id"))
@@ -43,6 +49,15 @@ class NodeRun(Base):
     """노드 하나를 실행한 기록. 파이프라인 전체를 묶는 Run 개념 없이, 노드 클릭 -> 실행 단위로
     독립적으로 생성된다 (화면에서 노드를 하나씩 클릭해서 transform을 실행하는 UX에 맞춘 구조)."""
     __tablename__ = "node_runs"
+    __table_args__ = (
+        # 노드 하나당 PENDING/RUNNING(진행 중) 실행은 동시에 1개만 허용 (retry 더블클릭 등 중복 실행 방지).
+        # sa.Enum(NodeRunStatus)는 기본적으로 멤버 "이름"을 저장하므로(.value인 "pending"이 아니라
+        # "PENDING") 아래 조건도 대문자여야 실제 컬럼 값과 맞는다.
+        Index(
+            "ix_node_runs_one_active_per_node", "node_id", unique=True,
+            postgresql_where=text("status IN ('PENDING', 'RUNNING')"),
+        ),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     node_id: Mapped[int] = mapped_column(ForeignKey("pipeline_nodes.id"))
@@ -51,3 +66,7 @@ class NodeRun(Base):
     output_kind: Mapped[str | None] = mapped_column(String(32), nullable=True)
     output_ref: Mapped[int | None] = mapped_column(nullable=True)  # 결과 Asset.id
     error: Mapped[str | None] = mapped_column(String(2000), nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
+    started_at: Mapped[datetime | None] = mapped_column(nullable=True)  # RUNNING으로 선점된 시각
+    finished_at: Mapped[datetime | None] = mapped_column(nullable=True)  # SUCCEEDED/FAILED로 끝난 시각

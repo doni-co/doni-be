@@ -36,14 +36,54 @@ Content-Type: application/json
   "name": "테스트 파이프라인"
 }
 
-### 노드 추가 (PDF 텍스트 추출)
+### source 노드 추가 (업로드된 Asset을 캔버스에 올림)
 POST http://localhost:8000/pipelines/1/nodes
 Content-Type: application/json
 
 {
-  "kind": "pdf_extract",
-  "params": {"ocr_fallback": true}
+  "kind": "source",
+  "source_asset_id": 1
 }
 
-### 실행
-POST http://localhost:8000/pipelines/1/runs
+### 변환 노드 생성 (노드+선+실행 기록을 한 번에 저장하고 큐에 등록, 202)
+POST http://localhost:8000/pipelines/nodes/transform
+Content-Type: application/json
+
+{
+  "input_node_id": 1,
+  "kind": "select_columns",
+  "params": {"columns": ["a", "b"]},
+  "position": {"x": 100, "y": 0}
+}
+
+### 결합(join) 노드 생성
+POST http://localhost:8000/pipelines/nodes/join
+Content-Type: application/json
+
+{
+  "left_node_id": 1,
+  "right_node_id": 2,
+  "params": {"left_key": "id", "right_key": "id", "how": "inner"},
+  "position": {"x": 200, "y": 0}
+}
+
+### 통합(union) 노드 생성
+POST http://localhost:8000/pipelines/nodes/union
+Content-Type: application/json
+
+{
+  "node_ids": [1, 2],
+  "position": {"x": 200, "y": 100}
+}
+
+### 실행 상태 폴링
+GET http://localhost:8000/pipelines/nodes/2/runs/latest
+
+### 실패한 노드 재시도
+POST http://localhost:8000/pipelines/nodes/2/retry
+
+### 노드 삭제 (진행 중이거나 자식이 있으면 409)
+DELETE http://localhost:8000/pipelines/nodes/2
+
+### 파이프라인 캔버스 복원 (새로고침 후)
+GET http://localhost:8000/pipelines/1/graph

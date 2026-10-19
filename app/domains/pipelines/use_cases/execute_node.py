@@ -1,20 +1,20 @@
-"""노드 하나를 실제로 실행하는 유스케이스. 화면에서 노드를 클릭해 transform을 지정하고
-실행했을 때 호출되는 지점이다 (파이프라인 전체를 묶어 실행하는 개념은 없음).
+"""NodeRun 하나를 실제로 실행하는 유스케이스(워커가 호출). create_step/retry_node가 이미
+PENDING NodeRun을 만들어 둔 상태에서 run_id만 받아 처리한다 (NodeRun 생성은 이 함수의 책임이 아님).
 
-흐름: PipelineNode 조회 -> 입력 Asset 결정(Edge 기반) -> 입력 로드 -> Transform 실행
-      -> 결과를 새 Asset으로 저장 -> NodeRun 상태 갱신.
-mediaset 입력(PDF/이미지 추출)과 dataset 입력(일반 transform)을 분기 처리한다.
+흐름: 조건부 UPDATE로 선점(PENDING -> RUNNING) -> 입력 Asset 결정(Edge 기반) -> 입력 로드
+      -> Transform 실행 -> 결과를 새 Asset으로 저장 -> 조건부 UPDATE(RUNNING -> SUCCEEDED/FAILED).
+모든 상태 변경은 "현재 상태가 X일 때만" 조건이 달린 UPDATE라서, 같은 작업이 중복 전달되거나
+청소 작업과 경합해도 둘 이상이 동시에 통과하지 않는다(0행이면 조용히 종료).
 """
 import inspect
 
-from sqlalchemy import select
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.domains.pipelines import nodes  # noqa: F401  (import 시 전체 노드가 registry에 등록됨)
 from app.domains.assets.service import get_asset, get_rows, register_asset, save_rows
+from app.domains.pipelines import nodes  # noqa: F401  (import 시 전체 노드가 registry에 등록됨)
 from app.domains.pipelines.nodes.base import TransformResult
 from app.domains.pipelines.nodes.registry import get as get_transform
-from app.domains.pipelines.rules.state_rules import assert_transition
 from app.models.enums import AssetKind, AssetOrigin, NodeRunStatus
 from app.models.pipeline import NodeRun, PipelineEdge, PipelineNode
 
@@ -28,7 +28,9 @@ async def _resolve_input_asset_ids(session: AsyncSession, node: PipelineNode) ->
         return [node.source_asset_id]
 
     edges = (
-        await session.execute(select(PipelineEdge).where(PipelineEdge.dst_node_id == node.id))
+        await session.execute(
+            select(PipelineEdge).where(PipelineEdge.dst_node_id == node.id).order_by(PipelineEdge.id)
+        )
     ).scalars().all()
     if not edges:
         raise ValueError("node has no input connected")
@@ -52,21 +54,25 @@ async def _resolve_input_asset_ids(session: AsyncSession, node: PipelineNode) ->
     return input_asset_ids
 
 
-async def execute_node(session: AsyncSession, node_id: int, owner_id: int) -> NodeRun:
-    node = await session.get(PipelineNode, node_id)
-    if node is None:
-        raise ValueError("node not found")
-
-    node_run = NodeRun(node_id=node.id, status=NodeRunStatus.PENDING)
-    session.add(node_run)
+async def execute_node(session: AsyncSession, run_id: int, owner_id: int) -> NodeRun | None:
+    claim = await session.execute(
+        update(NodeRun)
+        .where(NodeRun.id == run_id, NodeRun.status == NodeRunStatus.PENDING)
+        .values(status=NodeRunStatus.RUNNING, started_at=func.now())
+    )
     await session.commit()
-    await session.refresh(node_run)
+    if claim.rowcount == 0:
+        # 다른 워커가 이미 집어갔거나, 청소 작업이 먼저 FAILED로 마감했거나, 중복 전달된 메시지.
+        return None
 
-    assert_transition(node_run.status, NodeRunStatus.RUNNING)
-    node_run.status = NodeRunStatus.RUNNING
-    await session.commit()
+    node_run = await session.get(NodeRun, run_id)
+    assert node_run is not None  # 방금 이 id로 claim에 성공했으므로 항상 존재한다
+    node = await session.get(PipelineNode, node_run.node_id)
 
     try:
+        if node is None:
+            raise ValueError(f"node {node_run.node_id} not found")
+
         input_asset_ids = await _resolve_input_asset_ids(session, node)
         transform_cls = get_transform(node.kind)
         params = transform_cls.Params(**node.params)
@@ -87,16 +93,25 @@ async def execute_node(session: AsyncSession, node_id: int, owner_id: int) -> No
         )
         await save_rows(session, new_asset.id, result.columns, result.rows)
 
-        assert_transition(node_run.status, NodeRunStatus.SUCCEEDED)
-        node_run.status = NodeRunStatus.SUCCEEDED
-        node_run.output_kind = AssetKind.DATASET.value
-        node_run.output_ref = new_asset.id
+        await session.execute(
+            update(NodeRun)
+            .where(NodeRun.id == run_id, NodeRun.status == NodeRunStatus.RUNNING)
+            .values(
+                status=NodeRunStatus.SUCCEEDED, output_kind=AssetKind.DATASET.value,
+                output_ref=new_asset.id, finished_at=func.now(),
+            )
+        )
         await session.commit()
 
     except Exception as e:  # noqa: BLE001 - 어떤 예외든 NodeRun.error로 남기고 FAILED 처리
-        assert_transition(node_run.status, NodeRunStatus.FAILED)
-        node_run.status = NodeRunStatus.FAILED
-        node_run.error = str(e)
+        # DB 제약 위반 등으로 실패했다면 세션이 "rollback 전엔 아무 쿼리도 못 받는" 상태일 수 있다.
+        # 그 상태에서 바로 FAILED UPDATE를 실행하면 PendingRollbackError가 나서 실패 기록 자체가 묻힌다.
+        await session.rollback()
+        await session.execute(
+            update(NodeRun)
+            .where(NodeRun.id == run_id, NodeRun.status == NodeRunStatus.RUNNING)
+            .values(status=NodeRunStatus.FAILED, error=str(e), finished_at=func.now())
+        )
         await session.commit()
 
     await session.refresh(node_run)

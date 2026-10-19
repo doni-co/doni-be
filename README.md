@@ -26,12 +26,16 @@ APP_ENV=prod docker compose -f deploy/docker-compose.yml -f deploy/docker-compos
 
 ## Alembic
 
+`migrations/`는 init 완료, `target_metadata = app.models.Base.metadata`(async 엔진 패턴)로 설정돼 있다.
+모델을 바꾼 뒤 새 리비전을 만들 때:
+
 ```bash
-docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.local.yml run --rm api \
-  alembic init -t async migrations
-# migrations/env.py 에서 target_metadata = app.models.Base.metadata 로 설정
-# app/models/__init__.py 를 import 하면 전체 테이블이 함께 인식됨 (Alembic 누락 방지)
+docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.local.yml up -d db redis
+DATABASE_URL=postgresql+asyncpg://doni:doni@localhost:5432/doni uv run alembic revision --autogenerate -m "설명"
+DATABASE_URL=postgresql+asyncpg://doni:doni@localhost:5432/doni uv run alembic upgrade head
 ```
+
+api/worker 컨테이너는 마이그레이션을 자동으로 돌리지 않는다. 배포 전에 `alembic upgrade head`를 먼저 실행해야 한다.
 
 ## 테스트
 
@@ -58,6 +62,7 @@ app/
     ingestion/        업로드 -> Garage 저장 -> uploads 기록 -> 분류 -> Asset 등록
     assets/           Asset/AssetRow 전담 쿼리 (다른 도메인은 이 service로만 접근)
     pipelines/
+      errors.py          도메인 예외(404/409/422) - main.py에 핸들러 한 곳만 등록
       rules/            순수 규칙: graph_rules(순환/타입 검증), state_rules(NodeRun 상태 전이)
       nodes/            노드 카탈로그 (메뉴 "데이터 변환/결합/통합/AI 사용"과 매핑)
         transform/        데이터 변환: column_ops, extract_ops, cleanup_ops
@@ -65,8 +70,15 @@ app/
         ai/               AI 사용: llm_column
       output/            데이터 출력: to_dataset, to_entity_type
       use_cases/
-        execute_node.py    노드 클릭 -> 실행의 핵심 유스케이스 (load -> transform -> save)
-      tasks.py           Celery 작업 (node_id만 받아 워커가 execute_node를 수행)
+        create_step.py     POST /pipelines/nodes/transform|join|union 공통 로직
+                            (노드+선+실행 기록(PENDING) 저장 -> 큐 등록, 실패해도 노드는 남음)
+        execute_node.py    워커가 run_id를 받아 실행 (선점 -> load -> transform -> save -> 상태 갱신)
+        retry_node.py      FAILED 노드에 새 실행 기록을 만들어 재시도
+        delete_node.py     자식이 없고 진행 중이 아닌 노드만 삭제 (만든 Asset은 보존)
+        graph.py           GET /pipelines/{id}/graph: 새로고침 후 캔버스 복원
+        sweep_runs.py      멈춘 PENDING/RUNNING을 FAILED로 마감 (스케줄러 미연결, 수동 호출용)
+      tasks.py           Celery 작업: run_id만 받아 워커가 execute_node를 수행.
+                         작업마다 NullPool로 새 엔진을 써서 이벤트 루프 불일치를 피함
 tests/
 migrations/        Alembic
 deploy/            Dockerfile, docker-compose(base/local/cloud)
