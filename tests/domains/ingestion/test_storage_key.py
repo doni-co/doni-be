@@ -1,12 +1,14 @@
 """DB/스토리지 없이 도는 테스트: 저장 키·표시 이름 규칙(순수 함수)과, upload_file이 같은 이름을 덮어쓰지 않는지."""
-import io
+
+import hashlib
 
 import pytest
 
 from app.domains.ingestion import service
-from app.domains.ingestion.classifier import UnsupportedFileType
+from app.domains.ingestion.classifier import UnsupportedFileType, guess_content_type
+from app.domains.ingestion.parsers import InvalidFileContent
 from app.domains.ingestion.storage_key import build_display_name, build_storage_key, safe_filename
-from app.models.asset import Asset
+from app.models.asset import Asset, AssetRow
 from app.models.enums import UploadStatus
 from app.models.upload import Upload
 
@@ -112,8 +114,8 @@ def env(monkeypatch):
 
 async def test_same_filename_does_not_overwrite(env):
     session, saved = env
-    first = await service.upload_file(session, 1, "sales.csv", io.BytesIO(b"v1 data"))
-    second = await service.upload_file(session, 1, "sales.csv", io.BytesIO(b"v2 data"))
+    first = await service.upload_file(session, 1, "sales.csv", b"v1 data")
+    second = await service.upload_file(session, 1, "sales.csv", b"v2 data")
 
     assert set(saved) == {"uploads/1/sales_v1.csv", "uploads/1/sales_v2.csv"}
     assert saved["uploads/1/sales_v1.csv"] == b"v1 data"  # 첫 원본이 그대로 남아 있다
@@ -124,8 +126,8 @@ async def test_same_filename_does_not_overwrite(env):
 async def test_same_name_and_same_content_are_still_separate_assets(env):
     """이름과 내용이 모두 같아도 합치지 않고 따로 만든다 (같은 데이터를 다르게 정제할 수 있다)."""
     session, saved = env
-    first = await service.upload_file(session, 1, "same.csv", io.BytesIO(b"a,b\n1,2\n"))
-    second = await service.upload_file(session, 1, "same.csv", io.BytesIO(b"a,b\n1,2\n"))
+    first = await service.upload_file(session, 1, "same.csv", b"a,b\n1,2\n")
+    second = await service.upload_file(session, 1, "same.csv", b"a,b\n1,2\n")
     assert first["asset_id"] != second["asset_id"]
     assert len(saved) == 2
 
@@ -133,7 +135,7 @@ async def test_same_name_and_same_content_are_still_separate_assets(env):
 async def test_asset_display_name_gets_number_but_upload_keeps_original(env):
     session, _ = env
     for _ in range(3):
-        await service.upload_file(session, 1, "sales.csv", io.BytesIO(b"x"))
+        await service.upload_file(session, 1, "sales.csv", b"x")
 
     assert [a.name for a in session.of(Asset)] == ["sales.csv", "sales (2).csv", "sales (3).csv"]
     assert [u.original_filename for u in session.of(Upload)] == ["sales.csv"] * 3
@@ -148,7 +150,7 @@ async def test_existing_key_is_never_overwritten(env):
     session, saved = env
     saved["uploads/1/a_v1.csv"] = b"existing"
     saved["uploads/1/a_v2.csv"] = b"existing too"
-    await service.upload_file(session, 1, "a.csv", io.BytesIO(b"new"))
+    await service.upload_file(session, 1, "a.csv", b"new")
 
     assert saved["uploads/1/a_v1.csv"] == b"existing"
     assert saved["uploads/1/a_v2.csv"] == b"existing too"
@@ -158,9 +160,9 @@ async def test_existing_key_is_never_overwritten(env):
 
 async def test_versions_are_per_owner_and_per_filename(env):
     session, saved = env
-    await service.upload_file(session, 1, "a.csv", io.BytesIO(b"1"))
-    await service.upload_file(session, 2, "a.csv", io.BytesIO(b"2"))   # 다른 사용자
-    await service.upload_file(session, 1, "b.csv", io.BytesIO(b"3"))   # 다른 파일명
+    await service.upload_file(session, 1, "a.csv", b"1")
+    await service.upload_file(session, 2, "a.csv", b"2")   # 다른 사용자
+    await service.upload_file(session, 1, "b.csv", b"3")   # 다른 파일명
     assert set(saved) == {"uploads/1/a_v1.csv", "uploads/2/a_v1.csv", "uploads/1/b_v1.csv"}
 
 
@@ -168,9 +170,9 @@ async def test_failed_classification_still_counts_as_a_version(env):
     """분류에 실패한 파일도 이미 저장돼 있으므로, 같은 이름을 다시 올리면 그 파일을 덮어쓰지 않는다."""
     session, saved = env
     with pytest.raises(UnsupportedFileType):
-        await service.upload_file(session, 1, "data.zip", io.BytesIO(b"first"))
+        await service.upload_file(session, 1, "data.zip", b"first")
     with pytest.raises(UnsupportedFileType):
-        await service.upload_file(session, 1, "data.zip", io.BytesIO(b"second"))
+        await service.upload_file(session, 1, "data.zip", b"second")
 
     assert set(saved) == {"uploads/1/data_v1.zip", "uploads/1/data_v2.zip"}
     assert [u.status for u in session.of(Upload)] == [UploadStatus.UNSUPPORTED] * 2
@@ -178,6 +180,129 @@ async def test_failed_classification_still_counts_as_a_version(env):
 
 async def test_path_in_filename_is_stripped_before_saving(env):
     session, saved = env
-    await service.upload_file(session, 1, "../../evil.csv", io.BytesIO(b"x"))
+    await service.upload_file(session, 1, "../../evil.csv", b"x")
     assert set(saved) == {"uploads/1/evil_v1.csv"}
     assert session.of(Upload)[0].original_filename == "evil.csv"
+
+
+# ------------------------------------------- 메타데이터 · 정형 파일 행 적재 · 파싱 실패
+
+
+async def test_csv_upload_stores_rows_and_metadata(env):
+    session, saved = env
+    data = "이름,금액\n홍길동,100\n,200\n".encode()
+    result = await service.upload_file(session, 1, "sales.csv", data)
+
+    asset = session.of(Asset)[0]
+    assert result["kind"] == "dataset"
+    assert asset.row_count == 2
+    assert asset.schema_def == {"columns": ["이름", "금액"]}
+    rows = session.of(AssetRow)
+    assert [r.row_idx for r in rows] == [0, 1]
+    assert [r.data for r in rows] == [{"이름": "홍길동", "금액": "100"}, {"이름": None, "금액": "200"}]
+    assert saved["uploads/1/sales_v1.csv"] == data  # 원본은 그대로 Garage에 있다
+
+
+async def test_metadata_size_sha256_and_content_type(env):
+    session, _ = env
+    data = b"a,b\n1,2\n"
+    await service.upload_file(session, 1, "sales.csv", data)
+    asset = session.of(Asset)[0]
+    assert asset.size_bytes == len(data)
+    assert asset.sha256 == hashlib.sha256(data).hexdigest()
+    assert asset.content_type == "text/csv"  # 확장자로 추정
+
+
+async def test_content_type_from_client_wins(env):
+    session, _ = env
+    await service.upload_file(session, 1, "sales.csv", b"a\n1\n", "application/vnd.ms-excel")
+    assert session.of(Asset)[0].content_type == "application/vnd.ms-excel"
+
+
+@pytest.mark.parametrize(("filename", "expected"), [
+    ("a.csv", "text/csv"),
+    ("a.CSV", "text/csv"),
+    ("a.pdf", "application/pdf"),
+    ("a.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"),
+    ("a.hwp", "application/x-hwp"),
+    ("a.unknown", "application/octet-stream"),
+    ("noext", "application/octet-stream"),
+])
+def test_guess_content_type(filename, expected):
+    assert guess_content_type(filename) == expected  # OS(mimetypes)와 무관하게 항상 같다
+
+
+async def test_generic_octet_stream_falls_back_to_extension(env):
+    """브라우저·curl이 종류를 모를 때 보내는 octet-stream은 확장자로 다시 정한다."""
+    session, _ = env
+    await service.upload_file(session, 1, "sales.csv", b"a,b", "application/octet-stream")
+    assert session.of(Asset)[0].content_type == "text/csv"
+
+
+async def test_same_content_is_not_merged(env):
+    """sha256이 같아도 합치지 않는다 (같은 데이터를 다르게 정제할 수 있다)."""
+    session, _ = env
+    await service.upload_file(session, 1, "a.csv", b"x\n1\n")
+    await service.upload_file(session, 1, "b.csv", b"x\n1\n")
+    assets = session.of(Asset)
+    assert len(assets) == 2
+    assert assets[0].sha256 == assets[1].sha256
+    assert assets[0].id != assets[1].id
+    assert len(session.of(AssetRow)) == 2  # 행도 각각 저장
+
+
+async def test_broken_csv_keeps_original_and_marks_invalid(env):
+    session, saved = env
+    with pytest.raises(InvalidFileContent, match="row 2"):
+        await service.upload_file(session, 1, "bad.csv", b"a,b\n1,2,3\n")
+
+    assert saved["uploads/1/bad_v1.csv"] == b"a,b\n1,2,3\n"  # 원본은 남는다
+    assert session.of(Asset) == []
+    assert session.of(AssetRow) == []
+    upload = session.of(Upload)[0]
+    assert upload.status == UploadStatus.INVALID
+    assert "row 2" in upload.error
+
+
+async def test_retry_after_invalid_gets_next_version(env):
+    session, saved = env
+    with pytest.raises(InvalidFileContent):
+        await service.upload_file(session, 1, "bad.csv", b"a,b\n1,2,3\n")
+    await service.upload_file(session, 1, "bad.csv", b"a,b\n1,2\n")
+    assert set(saved) == {"uploads/1/bad_v1.csv", "uploads/1/bad_v2.csv"}
+    assert session.of(Asset)[0].name == "bad (2).csv"
+
+
+async def test_mediaset_has_no_rows(env):
+    session, saved = env
+    result = await service.upload_file(session, 1, "report.pdf", b"%PDF-1.4")
+    asset = session.of(Asset)[0]
+    assert result["kind"] == "mediaset"
+    assert asset.row_count is None and asset.schema_def is None
+    assert session.of(AssetRow) == []
+    assert asset.size_bytes == 8
+    assert "uploads/1/report_v1.pdf" in saved
+
+
+async def test_xls_is_accepted_as_mediaset(env):
+    session, _ = env
+    result = await service.upload_file(session, 1, "old.xls", b"\xd0\xcf\x11\xe0")
+    assert result["kind"] == "mediaset"
+
+
+async def test_json_upload_stores_rows(env):
+    session, _ = env
+    await service.upload_file(session, 1, "data.json", b'[{"a":1},{"a":2,"b":{"x":1}}]')
+    asset = session.of(Asset)[0]
+    assert asset.schema_def == {"columns": ["a", "b"]}
+    assert [r.data for r in session.of(AssetRow)] == [{"a": 1, "b": None}, {"a": 2, "b": {"x": 1}}]
+
+
+async def test_parquet_creates_asset_without_rows(env):
+    """parquet은 아직 행을 읽지 않는다 (pyarrow 필요)."""
+    session, _ = env
+    await service.upload_file(session, 1, "data.parquet", b"PAR1")
+    asset = session.of(Asset)[0]
+    assert asset.kind.value == "dataset"
+    assert asset.row_count is None
+    assert session.of(AssetRow) == []

@@ -10,6 +10,24 @@ Content-Type: application/json
   "password": "password"
 }
 
+### 파일 업로드 (csv/tsv/json은 행까지 읽어 저장, 같은 이름은 "이름 (2)")
+POST http://localhost:8000/uploads
+Content-Type: multipart/form-data; boundary=boundary
+
+--boundary
+Content-Disposition: form-data; name="file"; filename="sample.csv"
+Content-Type: text/csv
+
+이름,금액
+홍길동,100
+--boundary--
+
+### 파일 목록 (업로드한 원본만, 최신순)
+GET http://localhost:8000/assets
+
+### 파일 행 미리보기
+GET http://localhost:8000/assets/1/rows
+
 ### 파이프라인 생성
 POST http://localhost:8000/pipelines
 Content-Type: application/json

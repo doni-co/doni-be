@@ -18,10 +18,14 @@ async def register_asset(
     origin: AssetOrigin = AssetOrigin.UPLOAD,
     source_asset_id: int | None = None,
     produced_by_node_id: int | None = None,
+    size_bytes: int | None = None,
+    content_type: str | None = None,
+    sha256: str | None = None,
 ) -> Asset:
     asset = Asset(
         owner_id=owner_id, name=name, kind=kind, status=AssetStatus.READY, origin=origin,
         storage_key=storage_key, ext=ext,
+        size_bytes=size_bytes, content_type=content_type, sha256=sha256,
         source_asset_id=source_asset_id, produced_by_node_id=produced_by_node_id,
     )
     session.add(asset)
@@ -32,6 +36,17 @@ async def register_asset(
 
 async def get_asset(session: AsyncSession, asset_id: int) -> Asset | None:
     return await session.get(Asset, asset_id)
+
+
+async def list_uploaded_assets(session: AsyncSession, owner_id: int, limit: int = 100, offset: int = 0) -> list[Asset]:
+    """[파일] 화면 목록. 사용자가 올린 원본만(origin=upload) 최신순. 노드 결과(중간 결과)는 보이지 않는다."""
+    result = await session.execute(
+        select(Asset)
+        .where(Asset.owner_id == owner_id, Asset.origin == AssetOrigin.UPLOAD)
+        .order_by(Asset.created_at.desc(), Asset.id.desc())
+        .limit(limit).offset(offset)
+    )
+    return list(result.scalars().all())
 
 
 async def save_rows(session: AsyncSession, asset_id: int, columns: list[str], rows: list[dict]) -> None:
