@@ -296,13 +296,3 @@ async def test_json_upload_stores_rows(env):
     asset = session.of(Asset)[0]
     assert asset.schema_def == {"columns": ["a", "b"]}
     assert [r.data for r in session.of(AssetRow)] == [{"a": 1, "b": None}, {"a": 2, "b": {"x": 1}}]
-
-
-async def test_parquet_creates_asset_without_rows(env):
-    """parquet은 아직 행을 읽지 않는다 (pyarrow 필요)."""
-    session, _ = env
-    await service.upload_file(session, 1, "data.parquet", b"PAR1")
-    asset = session.of(Asset)[0]
-    assert asset.kind.value == "dataset"
-    assert asset.row_count is None
-    assert session.of(AssetRow) == []

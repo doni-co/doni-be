@@ -3,7 +3,7 @@ from pathlib import Path
 
 from app.models.enums import AssetKind
 
-DATASET_EXT = {".csv", ".tsv", ".parquet", ".json"}
+DATASET_EXT = {".csv", ".tsv", ".json"}
 MEDIA_EXT = {".pdf", ".ppt", ".pptx", ".hwp", ".hwpx", ".png", ".jpg", ".jpeg", ".docx", ".xlsx", ".xls", ".txt"}
 
 
@@ -12,7 +12,6 @@ _CONTENT_TYPES = {
     ".csv": "text/csv",
     ".tsv": "text/tab-separated-values",
     ".json": "application/json",
-    ".parquet": "application/vnd.apache.parquet",
     ".txt": "text/plain",
     ".pdf": "application/pdf",
     ".png": "image/png",
