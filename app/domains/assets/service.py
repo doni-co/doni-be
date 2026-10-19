@@ -1,7 +1,7 @@
 """Asset(원본/결과 메타데이터) + AssetRow(정형 행 데이터) 전담 쿼리.
 다른 도메인(ingestion, pipelines)은 반드시 이 함수들을 통해서만 Asset/AssetRow에 접근한다
 (직접 쿼리 금지 — 나중에 pipelines를 별도 서버로 분리할 때 이 규칙이 분리 난이도를 결정한다)."""
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.asset import Asset, AssetRow
@@ -49,6 +49,15 @@ async def save_rows(session: AsyncSession, asset_id: int, columns: list[str], ro
     for idx, row in enumerate(rows):
         session.add(AssetRow(asset_id=asset_id, row_idx=idx, data=row))
 
+    await session.commit()
+
+
+async def clear_produced_by_node(session: AsyncSession, node_id: int) -> None:
+    """노드 삭제 시 그 노드가 만든 Asset은 보존하되, 더 이상 존재하지 않는 노드를 가리키지 않게 한다
+    (pipelines/use_cases/delete_node.py가 노드를 지우기 직전에 호출)."""
+    await session.execute(
+        update(Asset).where(Asset.produced_by_node_id == node_id).values(produced_by_node_id=None)
+    )
     await session.commit()
 
 
